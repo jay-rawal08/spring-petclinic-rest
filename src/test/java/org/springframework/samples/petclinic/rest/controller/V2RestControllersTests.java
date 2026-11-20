@@ -10,9 +10,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.samples.petclinic.mapper.OwnerMapper;
 import org.springframework.samples.petclinic.mapper.PetMapper;
-import org.springframework.samples.petclinic.rest.advice.ExceptionControllerAdvice;
-import org.springframework.samples.petclinic.rest.controller.v2.OwnerRestControllerV2;
-import org.springframework.samples.petclinic.rest.controller.v2.PetRestControllerV2;
 import org.springframework.samples.petclinic.rest.dto.OwnerDto;
 import org.springframework.samples.petclinic.rest.dto.PetDto;
 import org.springframework.samples.petclinic.rest.dto.PetTypeDto;
@@ -24,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -39,10 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebAppConfiguration
 public class V2RestControllersTests {
     @Autowired
-    private OwnerRestControllerV2 ownerRestControllerV2;
-
-    @Autowired
-    private PetRestControllerV2 petRestControllerV2;
+    private WebApplicationContext webApplicationContext;
 
     @Autowired
     private OwnerMapper ownerMapper;
@@ -61,9 +56,7 @@ public class V2RestControllersTests {
 
     @BeforeEach
     void initOwners() {
-        this.mockMvc = MockMvcBuilders.standaloneSetup(ownerRestControllerV2, petRestControllerV2)
-            .setControllerAdvice(new ExceptionControllerAdvice())
-            .build();
+        this.mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
         owners = new ArrayList<>();
 
         OwnerDto ownerWithPet = new OwnerDto();
@@ -131,5 +124,152 @@ public class V2RestControllersTests {
             .andExpect(jsonPath("$.size").value(5))
             .andExpect(jsonPath("$.totalElements").value(2))
             .andExpect(jsonPath("$.totalPages").value(1));
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageDefaults() throws Exception {
+        var pageRequest = PageRequest.of(0, 20, Sort.by("id"));
+        given(this.clinicService.findOwners(null, pageRequest))
+            .willReturn(new PageImpl<>(ownerMapper.toOwners(owners).stream().toList(), pageRequest, owners.size()));
+        this.mockMvc.perform(get("/api/v2/owners")
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.page").value(0))
+            .andExpect(jsonPath("$.size").value(20))
+            .andExpect(jsonPath("$.totalElements").value(4));
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageDefaults() throws Exception {
+        var pageRequest = PageRequest.of(0, 20, Sort.by("id"));
+        given(this.clinicService.findPets(pageRequest))
+            .willReturn(new PageImpl<>(petMapper.toPets(pets).stream().toList(), pageRequest, pets.size()));
+        this.mockMvc.perform(get("/api/v2/pets")
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.page").value(0))
+            .andExpect(jsonPath("$.size").value(20))
+            .andExpect(jsonPath("$.totalElements").value(2));
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageSizeMin() throws Exception {
+        expectOwnersPage(0, 1);
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageSizeMin() throws Exception {
+        expectPetsPage(0, 1);
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageSizeMax() throws Exception {
+        expectOwnersPage(0, 100);
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageSizeMax() throws Exception {
+        expectPetsPage(0, 100);
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageNegativePage() throws Exception {
+        expectBadRequest("/api/v2/owners?page=-1&size=20");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageNegativePage() throws Exception {
+        expectBadRequest("/api/v2/pets?page=-1&size=20");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageSizeZero() throws Exception {
+        expectBadRequest("/api/v2/owners?page=0&size=0");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageSizeZero() throws Exception {
+        expectBadRequest("/api/v2/pets?page=0&size=0");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageSizeTooLarge() throws Exception {
+        expectBadRequest("/api/v2/owners?page=0&size=101");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageSizeTooLarge() throws Exception {
+        expectBadRequest("/api/v2/pets?page=0&size=101");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetOwnersPageNonInteger() throws Exception {
+        expectBadRequest("/api/v2/owners?page=abc&size=20");
+    }
+
+    @Test
+    @WithMockUser(roles = "OWNER_ADMIN")
+    void testGetPetsPageNonInteger() throws Exception {
+        expectBadRequest("/api/v2/pets?page=abc&size=20");
+    }
+
+    @Test
+    @WithMockUser(roles = "VET_ADMIN")
+    void testGetOwnersPageWrongRole() throws Exception {
+        this.mockMvc.perform(get("/api/v2/owners")
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "VET_ADMIN")
+    void testGetPetsPageWrongRole() throws Exception {
+        this.mockMvc.perform(get("/api/v2/pets")
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isForbidden());
+    }
+
+    private void expectOwnersPage(int page, int size) throws Exception {
+        var pageRequest = PageRequest.of(page, size, Sort.by("id"));
+        given(this.clinicService.findOwners(null, pageRequest))
+            .willReturn(new PageImpl<>(List.of(), pageRequest, owners.size()));
+        this.mockMvc.perform(get("/api/v2/owners?page=" + page + "&size=" + size)
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.page").value(page))
+            .andExpect(jsonPath("$.size").value(size));
+    }
+
+    private void expectPetsPage(int page, int size) throws Exception {
+        var pageRequest = PageRequest.of(page, size, Sort.by("id"));
+        given(this.clinicService.findPets(pageRequest))
+            .willReturn(new PageImpl<>(List.of(), pageRequest, pets.size()));
+        this.mockMvc.perform(get("/api/v2/pets?page=" + page + "&size=" + size)
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.page").value(page))
+            .andExpect(jsonPath("$.size").value(size));
+    }
+
+    private void expectBadRequest(String url) throws Exception {
+        this.mockMvc.perform(get(url)
+                .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.schemaValidationErrors").isArray())
+            .andExpect(jsonPath("$.schemaValidationErrors").isNotEmpty());
     }
 }
